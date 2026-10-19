@@ -22,6 +22,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 5. Share Action with Direct Copy & Icon Animation Feedback
     initShareModal();
+
+    // 6. Covers Carousel & Preview Modal
+    initCoversCarousel();
 });
 
 /* ==========================================================================
@@ -44,7 +47,7 @@ function initCanvasParticles() {
     let height = canvas.height = dims.h;
 
     function getParticleCount() {
-        return window.innerWidth < 600 ? 80 : 150;
+        return window.innerWidth < 600 ? 25 : 45;
     }
 
     let particleCount = getParticleCount();
@@ -74,15 +77,10 @@ function initCanvasParticles() {
         }
 
         draw() {
-            ctx.save();
-            ctx.globalAlpha = this.alpha;
-            ctx.fillStyle = '#ffffff';
-            ctx.shadowColor = '#ffffff';
-            ctx.shadowBlur = 3;
+            ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
             ctx.beginPath();
             ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
             ctx.fill();
-            ctx.restore();
         }
     }
 
@@ -214,4 +212,183 @@ function escapeHTML(str) {
     return str.replace(/[&<>'"]/g, 
         tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
     );
+}
+
+/* ==========================================================================
+   Smooth Infinite Stage Coverflow (Cálculo Físico 3D & Bucle)
+   ========================================================================== */
+function initCoversCarousel() {
+    const container = document.querySelector('.carousel-container-pure');
+    const track = document.getElementById('carousel-track');
+    if (!container || !track) return;
+
+    const cards = Array.from(track.querySelectorAll('.carousel-card'));
+    const total = cards.length;
+    if (total === 0) return;
+
+    let currentIndex = 0;
+    let isDragging = false;
+    let startX = 0;
+    let currentDragDelta = 0;
+
+    // Calcular distribución de tarjetas respecto al índice central (bucle infinito modular)
+    function render() {
+        const isMobile = window.innerWidth <= 480;
+        const spacing = isMobile ? 130 : 210;
+
+        cards.forEach((card, index) => {
+            // Calcular distancia circular en el bucle [-total/2, total/2]
+            let offset = (index - currentIndex) % total;
+            if (offset > total / 2) offset -= total;
+            if (offset < -total / 2) offset += total;
+
+            // Añadir el arrastre en vivo si está activo
+            const effectiveOffset = offset + (currentDragDelta / spacing);
+            const absOffset = Math.abs(effectiveOffset);
+
+            // Solo mostrar las tarjetas cercanas al centro (hasta 3 a cada lado)
+            if (absOffset > 3.4) {
+                card.style.visibility = 'hidden';
+                card.style.opacity = '0';
+                card.style.pointerEvents = 'none';
+                card.classList.remove('is-center');
+                return;
+            }
+
+            card.style.visibility = 'visible';
+            card.style.pointerEvents = 'auto';
+
+            // Matemáticas de curva Coverflow:
+            // X: desplazamiento horizontal espaciado
+            const x = effectiveOffset * spacing;
+            // Scale: el central crece al 1.35x, los laterales bajan suavemente al 0.78x
+            const scale = Math.max(0.72, 1.3 - (absOffset * 0.22));
+            // Z: el central viaja al frente (+80px), laterales retroceden (-70px * offset)
+            const z = (1 - Math.min(1, absOffset)) * 90 - (absOffset * 35);
+            // Opacity: el central 1, laterales se difuminan con elegancia
+            const opacity = Math.max(0, 1 - (absOffset * 0.28));
+            // RotateY: rotación sutil 3D angular
+            const rotateY = -Math.sign(effectiveOffset) * Math.min(30, absOffset * 18);
+            // Brightness
+            const brightness = Math.max(0.45, 1 - (absOffset * 0.22));
+
+            card.style.transform = `translateX(${x}px) translateZ(${z}px) rotateY(${rotateY}deg) scale(${scale})`;
+            card.style.opacity = opacity;
+            card.style.filter = `brightness(${brightness})`;
+            card.style.zIndex = Math.round(100 - absOffset * 20);
+
+            if (absOffset < 0.45) {
+                card.classList.add('is-center');
+            } else {
+                card.classList.remove('is-center');
+            }
+        });
+    }
+
+    function goToIndex(idx) {
+        currentIndex = (idx % total + total) % total;
+        currentDragDelta = 0;
+        render();
+    }
+
+    // Interacción al hacer clic en cualquier portada
+    cards.forEach((card, idx) => {
+        card.addEventListener('click', (e) => {
+            if (Math.abs(currentDragDelta) > 5) return; // Evitar click si fue drag
+
+            let offset = (idx - currentIndex) % total;
+            if (offset > total / 2) offset -= total;
+            if (offset < -total / 2) offset += total;
+
+            if (Math.abs(offset) < 0.3) {
+                // Si ya está en el centro, abrir modal visor
+                const coverModal = document.getElementById('cover-modal');
+                const modalImg = document.getElementById('cover-modal-img');
+                const modalTitle = document.getElementById('cover-modal-title');
+                const modalCategory = document.getElementById('cover-modal-category');
+
+                if (modalImg) modalImg.src = card.getAttribute('data-src');
+                if (modalTitle) modalTitle.textContent = card.getAttribute('data-title');
+                if (modalCategory) modalCategory.textContent = card.getAttribute('data-category');
+                if (coverModal) coverModal.classList.add('active');
+            } else {
+                // Si es lateral, viajar y centrarla de inmediato con animación suave
+                goToIndex(idx);
+            }
+        });
+    });
+
+    // Deslizamiento con Mouse (Drag) y Touch
+    function onStart(e) {
+        isDragging = true;
+        startX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+        currentDragDelta = 0;
+        track.style.transition = 'none';
+    }
+
+    function onMove(e) {
+        if (!isDragging) return;
+        const currentX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+        currentDragDelta = currentX - startX;
+        render();
+    }
+
+    function onEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        const threshold = 40;
+        if (currentDragDelta > threshold) {
+            goToIndex(currentIndex - 1);
+        } else if (currentDragDelta < -threshold) {
+            goToIndex(currentIndex + 1);
+        } else {
+            currentDragDelta = 0;
+            render();
+        }
+    }
+
+    container.addEventListener('mousedown', onStart);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onEnd);
+
+    container.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onEnd);
+
+    // Soporte con la rueda del ratón (desplazamiento horizontal de portadas)
+    container.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaX) > Math.abs(e.deltaY) || Math.abs(e.deltaY) > 25) {
+            e.preventDefault();
+            if (e.deltaY > 0 || e.deltaX > 0) {
+                goToIndex(currentIndex + 1);
+            } else {
+                goToIndex(currentIndex - 1);
+            }
+        }
+    }, { passive: false });
+
+    // Teclado (Flechas izquierda y derecha)
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') goToIndex(currentIndex - 1);
+        if (e.key === 'ArrowRight') goToIndex(currentIndex + 1);
+    });
+
+    // Render inicial
+    goToIndex(0);
+
+    // Ajustar si la ventana cambia de tamaño
+    window.addEventListener('resize', () => render());
+
+    // Modal cerrar
+    const coverModal = document.getElementById('cover-modal');
+    const closeCoverModal = document.getElementById('close-cover-modal');
+    if (closeCoverModal && coverModal) {
+        closeCoverModal.addEventListener('click', () => coverModal.classList.remove('active'));
+        coverModal.addEventListener('click', (e) => {
+            if (e.target === coverModal) coverModal.classList.remove('active');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') coverModal.classList.remove('active');
+        });
+    }
 }
